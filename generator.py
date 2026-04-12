@@ -2,19 +2,12 @@ from __future__ import annotations
 
 import json
 import random
-import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 
 class PuzzleGenerator:
-    def __init__(
-        self,
-        processed_path: str | Path,
-        seed: Optional[int] = None,
-        prior_puzzles_json: Optional[str | Path] = None,
-        auto_check_duplicates: bool = True,
-    ) -> None:
+    def __init__(self, processed_path: str | Path, seed: Optional[int] = None) -> None:
         self.processed_path = Path(processed_path)
         with self.processed_path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
@@ -22,6 +15,18 @@ class PuzzleGenerator:
         self.metadata: Dict[str, Any] = payload.get("metadata", {})
         self.categories: List[Dict[str, Any]] = payload["categories"]
         self.neighbors: Dict[str, List[Dict[str, Any]]] = payload["neighbors"]
+        
+        self.existing_word_sets: Set[frozenset[str]] = set()
+        existing_path = Path("connections.json")
+        if existing_path.exists():
+            with existing_path.open("r", encoding="utf-8") as f:
+                existing = json.load(f)
+
+            for puzzle in existing:
+                words = []
+                for group in puzzle["answers"]:
+                    words.extend(self._norm(w) for w in group["members"])
+                self.existing_word_sets.add(frozenset(words))
         self.rng = random.Random(seed)
 
         self.categories_by_color: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {
@@ -32,23 +37,9 @@ class PuzzleGenerator:
             if color in self.categories_by_color:
                 self.categories_by_color[color].append((idx, cat))
 
-        self.auto_check_duplicates = auto_check_duplicates
-        self.prior_puzzles_json = (
-            Path(prior_puzzles_json).expanduser().resolve()
-            if prior_puzzles_json is not None
-            else None
-        )
-        self._prior_puzzle_signatures: Optional[Set[str]] = None
-
     @staticmethod
     def _norm(word: Any) -> str:
         return str(word).strip().upper()
-
-    @staticmethod
-    def _normalize_for_signature(word: Any) -> str:
-        s = unicodedata.normalize("NFKC", str(word))
-        s = " ".join(s.strip().split())
-        return s.lower()
 
     def _word_set(self, cat: Dict[str, Any]) -> Set[str]:
         return {self._norm(w) for w in cat["members"]}
@@ -92,75 +83,13 @@ class PuzzleGenerator:
             if self._word_set(cat).isdisjoint(used_word_set):
                 return idx, cat, float(entry["similarity"])
         return None
-
-    def _signature_from_words(self, words: Sequence[Any]) -> str:
-        return ",".join(sorted(self._normalize_for_signature(w) for w in words))
-
-    def _signature_from_answers_puzzle(self, puzzle: Dict[str, Any]) -> Optional[str]:
-        answers = puzzle.get("answers")
-        if not isinstance(answers, list) or len(answers) != 4:
-            return None
-
-        words: List[Any] = []
-        for answer in answers:
-            if not isinstance(answer, dict):
-                return None
-            members = answer.get("members")
-            if not isinstance(members, list) or len(members) != 4:
-                return None
-            words.extend(members)
-
-        if len(words) != 16:
-            return None
-        return self._signature_from_words(words)
-
-    def _signature_from_generated_groups(self, groups: Sequence[Dict[str, Any]]) -> str:
-        words: List[Any] = []
-        for cat in groups:
-            words.extend(cat["members"])
-        return self._signature_from_words(words)
-
-    def _load_prior_puzzle_signatures(self) -> Set[str]:
-        if self._prior_puzzle_signatures is not None:
-            return self._prior_puzzle_signatures
-
-        if not self.prior_puzzles_json:
-            raise ValueError(
-                "Duplicate checking is enabled, but no prior_puzzles_json path was provided."
-            )
-        if not self.prior_puzzles_json.is_file():
-            raise ValueError(f"Prior-puzzles JSON file not found: {self.prior_puzzles_json}")
-
-        with self.prior_puzzles_json.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        if isinstance(data, list):
-            puzzles = [x for x in data if isinstance(x, dict)]
-        elif isinstance(data, dict):
-            puzzles = []
-            for value in data.values():
-                if isinstance(value, list) and all(isinstance(x, dict) for x in value):
-                    puzzles = value
-                    break
-            if not puzzles:
-                puzzles = [data]
-        else:
-            puzzles = []
-
-        signatures: Set[str] = set()
-        for puzzle in puzzles:
-            signature = self._signature_from_answers_puzzle(puzzle)
-            if signature is not None:
-                signatures.add(signature)
-
-        self._prior_puzzle_signatures = signatures
-        return signatures
-
+    
     def _is_duplicate_puzzle(self, groups: Sequence[Dict[str, Any]]) -> bool:
-        if not self.auto_check_duplicates:
-            return False
-        existing_signatures = self._load_prior_puzzle_signatures()
-        return self._signature_from_generated_groups(groups) in existing_signatures
+        words = []
+        for cat in groups:
+            words.extend(self._norm(w) for w in cat["members"])
+
+        return frozenset(words) in self.existing_word_sets
 
     def generate_puzzle(self, max_tries: int = 200) -> Dict[str, Any]:
         purple_pool = self.categories_by_color.get("purple", [])
@@ -229,16 +158,11 @@ class PuzzleGenerator:
                 "neighbor_similarity": neighbor_similarity,
             }
 
-        if self.auto_check_duplicates:
-            raise ValueError(
-                "Could not build a valid 16-word puzzle with no prior match after max_tries."
-            )
         raise ValueError("Could not build a valid 16-word puzzle after max_tries.")
 
 
 if __name__ == "__main__":
     default_path = Path("processed_categories.json")
-    prior_json = Path("connections.json") if Path("connections.json").exists() else None
-    generator = PuzzleGenerator(default_path, prior_puzzles_json=prior_json)
+    generator = PuzzleGenerator(default_path)
     puzzle = generator.generate_puzzle()
     print(json.dumps(puzzle, indent=2))
