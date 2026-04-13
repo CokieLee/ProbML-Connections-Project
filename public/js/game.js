@@ -119,7 +119,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Show category bar only when answers are being revealed
       if (revealAnswersMode) {
         const bannerEl = document.createElement("div");
-        bannerEl.className = "group-banner";
+        bannerEl.className = `group-banner group-banner-${groupTiles[0].color}`;
 
         const titleEl = document.createElement("div");
         titleEl.className = "group-banner-title";
@@ -140,7 +140,7 @@ document.addEventListener("DOMContentLoaded", () => {
         tileEl.textContent = tile.label;
         tileEl.dataset.id = tile.id;
 
-        tileEl.classList.add("tile-solved", `tile-group-${tile.group}`);
+        tileEl.classList.add("tile-solved", `tile-color-${tile.color}`);
         tileEl.disabled = true;
 
         gridEl.appendChild(tileEl);
@@ -183,13 +183,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function revealAllAnswers() {
-    const allGroupIds = [...new Set(tiles.map((t) => t.group))];
+    const colorRank = { yellow: 0, green: 1, blue: 2, purple: 3 };
+
+    const allGroupIds = [...new Set(tiles.map((t) => t.group))]
+      .sort((a, b) => {
+        const colorA = tiles.find((t) => t.group === a)?.color ?? "purple";
+        const colorB = tiles.find((t) => t.group === b)?.color ?? "purple";
+        return colorRank[colorA] - colorRank[colorB];
+      });
+
+    solvedGroups.clear();
+    solvedOrder = [];
 
     allGroupIds.forEach((groupId) => {
-      if (!solvedGroups.has(groupId)) {
-        solvedGroups.add(groupId);
-        solvedOrder.push(groupId);
-      }
+      solvedGroups.add(groupId);
+      solvedOrder.push(groupId);
     });
 
     revealAnswersMode = true;
